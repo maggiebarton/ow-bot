@@ -7,7 +7,23 @@ export interface PlayerSummary {
   namecard?: string | null;
   title?: string | null;
   endorsement?: { level: number } | null;
-  competitive?: unknown;
+  competitive?: Partial<Record<Platform, CompetitiveRanks | null>>;
+}
+
+export interface CompetitiveRank {
+  division: string;
+  tier: number;
+  role_icon?: string;
+  rank_icon?: string;
+  tier_icon?: string;
+}
+
+export interface CompetitiveRanks {
+  season: number;
+  tank: CompetitiveRank | null;
+  damage: CompetitiveRank | null;
+  support: CompetitiveRank | null;
+  open?: CompetitiveRank | null;
 }
 
 export interface StatsSummary {
@@ -18,6 +34,13 @@ export interface StatsSummary {
   kda: number;
   time_played: number;
   average: {
+    eliminations: number;
+    assists: number;
+    deaths: number;
+    damage: number;
+    healing: number;
+  };
+  total?: {
     eliminations: number;
     assists: number;
     deaths: number;

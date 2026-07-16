@@ -1,12 +1,18 @@
-# OW Bot
+<p align="center">
+  <img src="assets/oversauce.png" alt="OverSauce logo" width="320">
+</p>
 
-A Discord bot for linking BattleTags, viewing Overwatch profiles and hero career stats, and comparing linked server members using the [OverFast API](https://overfast-api.tekrop.fr/).
+# OverSauce
+
+OverSauce is a Discord bot for linking BattleTags, viewing Overwatch profiles and hero career stats, and comparing linked server members using the [OverFast API](https://overfast-api.tekrop.fr/).
 
 ## Features
 
 - Persistent BattleTag links scoped to each Discord server
 - PC and console profiles with Competitive and Quick Play filters
-- Current profile summaries and detailed, per-hero career statistics
+- Overall and role career summaries with interactive role buttons
+- Detailed hero career cards grouping per-10-minute averages, best games, and totals
+- In-message hero selectors and Competitive/Quick Play toggles
 - Live hero autocomplete sourced from OverFast's `/heroes` endpoint
 - Server-wide raw-stat and role-aware hero scoreboards
 - Discord user context command for quickly viewing another member's stats
@@ -15,14 +21,18 @@ A Discord bot for linking BattleTags, viewing Overwatch profiles and hero career
 
 - `/ow-link battletag platform [user]` — validate and remember an account. Linking someone else requires **Manage Server**
 - `/ow-profile [user] [mode]` — show headline stats for yourself or another linked member. Mode defaults to Competitive
-- `/ow-career hero [user] [mode]` — show detailed hero career stats with live hero autocomplete and buttons for switching sections
+- `/ow-career [user] [mode]` — show general career stats with buttons for General, Tank, Damage, and Support summaries
+- `/ow-hero-career hero [user] [mode]` — show grouped hero statistics, then switch heroes or modes without rerunning the command
 - `/ow-hero-scoreboard hero [mode]` — show the role-aware Hero Score ranking for a particular hero
 - `/ow-tag [user]` — retrieve a saved BattleTag for adding a friend
-- `/ow-scoreboard [metric] [mode]` — rank linked members by raw win rate, KDA, or games won
+- `/ow-scoreboard [metric] [mode]` — rank linked members by win rate, KDA, games won, or current Tank/Damage/Support/Open Queue (6v6) competitive rank
+- `/ow-comp-check player1 player2 [player3] [player4] [player5]` — find role assignments where the selected linked members form a narrow 5v5 Competitive group
 - `/ow-unlink` — delete your own link from the current server
 - Right-click a member → Apps → **View Overwatch Stats**
 
 Users may enter a BattleTag as either `magsauce#11831` or `magsauce-11831`. The bot converts `#` to `-` for OverFast and displays the familiar `#` form in Discord.
+
+Hero-career averages are values returned by OverFast and represent rates per 10 minutes; OverSauce does not calculate them. If Blizzard reports activity but zero completed games, OverSauce labels it as partial activity rather than showing a misleading 0–0 record.
 
 ## Hero Score
 
@@ -88,6 +98,9 @@ npm test
 - Links are stored in the SQLite file configured by `DATABASE_PATH` and scoped per Discord server.
 - Scoreboards and career views fetch current data when requested. OverFast generally caches player data for about 10 minutes.
 - Hero autocomplete data is cached by the bot for 24 hours.
+- `/ow-hero-career` includes Tank, Damage, and Support hero selectors plus Competitive and Quick Play toggle buttons. These controls update the existing Discord message.
+- Competitive-rank scoreboards use each member's linked platform and current `/summary` role or Open Queue (6v6) rank. Unranked members are omitted; the mode option does not apply to rank metrics.
+- `/ow-comp-check` evaluates every valid 1 Tank/2 Damage/2 Support role assignment using published ranks. It requires one platform pool, excludes unranked role choices, and uses narrow ranges of 10 divisions through Diamond, 5 in Master/Grandmaster, and 3 in Champion.
 - OverFast can only expose career stats for public Overwatch career profiles.
 - If OverFast cannot find a player, the bot displays when the API can check Blizzard again. This is a retry backoff: a later request triggers the next lookup; it is not an automatic refresh.
 - Each member chooses PC or console when linking, and can run `/ow-link` again to replace the saved account/platform.
