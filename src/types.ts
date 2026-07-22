@@ -65,8 +65,11 @@ export interface Hero {
 export type CareerStats = Record<string, Record<string, Record<string, string | number>>>;
 
 export interface LinkRecord {
+  accountId: number;
   guildId: string;
   discordUserId: string;
+  label: string;
+  isDefault: boolean;
   playerId: string;
   battletag: string;
   platform: Platform;
