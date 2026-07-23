@@ -3,12 +3,16 @@ import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, Client, EmbedBuilder, Events, GatewayIntentBits, MessageFlags, PermissionFlagsBits, StringSelectMenuBuilder, type AutocompleteInteraction, type ButtonInteraction, type ChatInputCommandInteraction, type StringSelectMenuInteraction, type UserContextMenuCommandInteraction } from "discord.js";
 import { config } from "./config.js";
+import { BlizzardRatesClient, BlizzardRatesError, competitiveTierFromDivision, type CompetitiveTier, type HeroRate, type StatsInput } from "./blizzard-rates.js";
 import { LinkStore } from "./database.js";
 import { displayBattletag, OverfastClient, OverfastError } from "./overfast.js";
+import { OverpickerClient, OverpickerError, type OverpickerHero, type SynergyMatrix } from "./overpicker.js";
 import type { CompetitiveRank, Gamemode, LinkRecord, Platform, StatsSummary } from "./types.js";
 
 const store = new LinkStore(config.databasePath);
 const overfast = new OverfastClient(config.overfastBaseUrl);
+const overpicker = new OverpickerClient(config.overpickerBaseUrl);
+const blizzardRates = new BlizzardRatesClient();
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 client.once(Events.ClientReady, ready => console.log(`Ready as ${ready.user.tag}`));
@@ -27,7 +31,7 @@ client.on(Events.InteractionCreate, async interaction => {
     else if (interaction.isStringSelectMenu() && interaction.customId.startsWith("owb|")) await changeScoreboardMetric(interaction);
   } catch (error) {
     console.error(error);
-    const detail = error instanceof OverfastError || (error instanceof Error && error.message.startsWith("Account labels"))
+    const detail = error instanceof OverfastError || error instanceof OverpickerError || error instanceof BlizzardRatesError || (error instanceof Error && error.message.startsWith("Account labels"))
       ? error.message : "Something went wrong while running that command.";
     const message = `⚠️ **Couldn't finish that**\n${detail}`;
     if (interaction.isRepliable()) await (interaction.deferred || interaction.replied ? interaction.editReply(message) : interaction.reply({ content: message, flags: MessageFlags.Ephemeral }));
@@ -77,9 +81,216 @@ async function handleSlash(i: ChatInputCommandInteraction) {
     await showMeme(i);
   } else if (i.commandName === "ow-random-hero") {
     await showRandomHero(i);
+  } else if (i.commandName === "ow-counters") {
+    await showCounters(i);
+  } else if (i.commandName === "ow-synergies") {
+    await showSynergies(i);
   } else if (i.commandName === "ow-comp-check") {
     await checkCompetitiveGroup(i);
   }
+}
+
+async function showCounters(i: ChatInputCommandInteraction) {
+  await i.deferReply();
+  const heroKey = i.options.getString("hero", true);
+  const [overfastHeroes, overpickerHeroes, matrix] = await Promise.all([
+    overfast.heroes(), overpicker.heroes(), overpicker.counterMatrix(),
+  ]);
+  const selected = overfastHeroes.find(hero => hero.key === heroKey);
+  if (!selected) {
+    await i.editReply("Choose a hero from the autocomplete list.");
+    return;
+  }
+
+  const filters = await resolveCounterFilters(i, selected.role);
+  const rates = await blizzardRates.competitive(filters.tier, filters.input);
+  const counters = buildCounterRolePicks(selected.name, overpickerHeroes, matrix, rates);
+  if (!counters) {
+    await i.editReply(`No counter data was found for **${selected.name}**.`);
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(0xed4245)
+    .setTitle(`🚫 Ban picks against ${selected.name}`)
+    .setDescription([
+      `The strongest counters into **${selected.name}**, with choices in every role:`,
+      `📊 **${filters.tier === "All" ? "All Competitive tiers" : filters.tier} · ${filters.input === "PC" ? "Mouse & Keyboard" : "Controller"} · Americas**`,
+      `*${filters.source}*`,
+      "",
+      formatCounterPicks(counters),
+      "",
+      "*Priority = Blizzard pick rate × matchup weight (+20 counts 2×; +10 counts 1×).*",
+    ].join("\n"))
+    .setThumbnail(selected.portrait)
+    .setFooter({ text: "Matchups: Overpicker · Pick/win/ban rates: Blizzard" })
+    .setURL("https://overpicker.com/counters");
+  await i.editReply({ embeds: [embed] });
+}
+
+async function resolveCounterFilters(i: ChatInputCommandInteraction, heroRole: string) {
+  const tierOverride = i.options.getString("tier") as CompetitiveTier | null;
+  const inputOverride = i.options.getString("input") as StatsInput | null;
+  const link = store.get(i.guildId!, i.user.id);
+  const inferredInput: StatsInput | undefined = link?.platform === "console" ? "Console" : link ? "PC" : undefined;
+  let inferredTier: CompetitiveTier | undefined;
+
+  if (!tierOverride && link && ["tank", "damage", "support"].includes(heroRole)) {
+    try {
+      const profile = await overfast.summary(link.playerId);
+      const ranks = profile.competitive?.[link.platform];
+      const rank = ranks?.[heroRole as "tank" | "damage" | "support"];
+      inferredTier = competitiveTierFromDivision(rank?.division);
+    } catch {
+      // Counter recommendations can still use all-tier statistics if the profile is unavailable.
+    }
+  }
+
+  const tier = tierOverride ?? inferredTier ?? "All";
+  const input = inputOverride ?? inferredInput ?? "PC";
+  const inferred: string[] = [];
+  const fallback: string[] = [];
+  if (!tierOverride) (inferredTier ? inferred : fallback).push(inferredTier ? `${tier} tier` : "all tiers");
+  if (!inputOverride) (inferredInput ? inferred : fallback).push(inferredInput ? (input === "PC" ? "Mouse & Keyboard" : "Controller") : "Mouse & Keyboard");
+
+  const sourceParts: string[] = [];
+  if (inferred.length) sourceParts.push(`From default account \`${link!.label}\`: ${inferred.join(" and ")}`);
+  const overrides = [tierOverride ? `${tierOverride} tier` : "", inputOverride ? (inputOverride === "PC" ? "Mouse & Keyboard" : "Controller") : ""].filter(Boolean);
+  if (overrides.length) sourceParts.push(`Overrides: ${overrides.join(" and ")}`);
+  if (fallback.length) sourceParts.push(`Fallback: ${fallback.join(" and ")}`);
+  return { tier, input, source: `${sourceParts.join(". ")}.` };
+}
+
+async function showSynergies(i: ChatInputCommandInteraction) {
+  await i.deferReply();
+  const heroKey = i.options.getString("hero", true);
+  const [overfastHeroes, overpickerHeroes, matrix] = await Promise.all([
+    overfast.heroes(), overpicker.heroes(), overpicker.synergyMatrix(),
+  ]);
+  const selected = overfastHeroes.find(hero => hero.key === heroKey);
+  if (!selected) {
+    await i.editReply("Choose a hero from the autocomplete list.");
+    return;
+  }
+
+  const lineup = buildSynergyLineup(selected.name, overpickerHeroes, matrix);
+  if (!lineup) {
+    await i.editReply(`No synergy data was found for **${selected.name}**.`);
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(0x57f287)
+    .setTitle(`🤝 Best teammates for ${selected.name}`)
+    .setDescription([
+      `A complete **6v6 lineup** built around **${selected.name}**:`,
+      "",
+      formatLineup(lineup),
+      "",
+      "*Two heroes per role, including your selected hero.*",
+    ].join("\n"))
+    .setThumbnail(selected.portrait)
+    .setFooter({ text: "Synergy data: Overpicker · Scores reflect kit compatibility" })
+    .setURL("https://overpicker.com/synergies");
+  await i.editReply({ embeds: [embed] });
+}
+
+function normalizeHeroName(name: string) {
+  return name.normalize("NFD").replace(/\p{Diacritic}/gu, "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
+function findOverpickerHero(heroes: Awaited<ReturnType<OverpickerClient["heroes"]>>, name: string) {
+  return heroes.find(hero => normalizeHeroName(hero.name) === normalizeHeroName(name));
+}
+
+function synergyLabel(score: number) {
+  return score >= 20 ? "Must pick" : score >= 10 ? "Good synergy" : score >= 0 ? "Decent pairing" : "Limited synergy";
+}
+
+type SynergyLineup = Record<"Tank" | "Damage" | "Support", { name: string; score: number; selected?: boolean }[]>;
+type CounterPick = { name: string; score: number; pickrate: number; winrate: number; banrate: number; priority: number };
+type RolePicks = Record<"Tank" | "Damage" | "Support", CounterPick[]>;
+
+function buildCounterRolePicks(selectedName: string, heroes: OverpickerHero[], matrix: SynergyMatrix, rates: HeroRate[]): RolePicks | undefined {
+  const selected = findOverpickerHero(heroes, selectedName);
+  const scores = selected && matrix[selected.name];
+  if (!selected || !scores) return undefined;
+  const rateByName = new Map(rates.map(rate => [normalizeHeroName(rate.name), rate]));
+
+  return Object.fromEntries((["Tank", "Damage", "Support"] as const).map(role => [
+    role,
+    heroes
+      .filter(hero => hero.general_rol === role && hero.name !== selected.name)
+      .map(hero => {
+        const score = scores[hero.name] ?? 0;
+        const rate = rateByName.get(normalizeHeroName(hero.name));
+        const pickrate = rate?.pickrate ?? 0;
+        return {
+          name: hero.name,
+          score,
+          pickrate,
+          winrate: rate?.winrate ?? 0,
+          banrate: rate?.banrate ?? 0,
+          priority: pickrate * (score / 10),
+        };
+      })
+      .filter(hero => hero.score >= 10)
+      .sort((a, b) => b.priority - a.priority || b.score - a.score || a.name.localeCompare(b.name))
+  ])) as RolePicks;
+}
+
+function counterLabel(score: number) {
+  return score >= 20 ? "Hard counter" : score >= 10 ? "Counter" : score >= 0 ? "Skill matchup" : "Weak counter";
+}
+
+function formatCounterPicks(picks: RolePicks) {
+  const roleIcons = { Tank: "🛡️", Damage: "⚔️", Support: "➕" };
+  return (["Tank", "Damage", "Support"] as const).map(role => {
+    const heroes = picks[role].map(hero =>
+      `**${hero.name}** — ${counterLabel(hero.score)} · **${formatPercent(hero.pickrate)} pick** · ${formatPercent(hero.winrate)} win · ${formatPercent(hero.banrate)} ban`);
+    return `${roleIcons[role]} **${role}**\n${heroes.length ? heroes.join("\n") : "*No counters listed*"}`;
+  }).join("\n\n");
+}
+
+function formatPercent(value: number) {
+  return `${Number.isInteger(value) ? value : value.toFixed(1)}%`;
+}
+
+function formatRolePicks(picks: RolePicks, label: (score: number) => string) {
+  const roleIcons = { Tank: "🛡️", Damage: "⚔️", Support: "➕" };
+  return (["Tank", "Damage", "Support"] as const).map(role => {
+    const heroes = picks[role].map(hero =>
+      `**${hero.name}** — ${label(hero.score)} (${hero.score >= 0 ? "+" : ""}${hero.score})`);
+    return `${roleIcons[role]} **${role}**\n${heroes.length ? heroes.join("\n") : "*No counters listed*"}`;
+  }).join("\n\n");
+}
+
+function buildSynergyLineup(selectedName: string, heroes: OverpickerHero[], matrix: SynergyMatrix): SynergyLineup | undefined {
+  const selected = findOverpickerHero(heroes, selectedName);
+  const scores = selected && matrix[selected.name];
+  if (!selected || !scores) return undefined;
+
+  const roles = ["Tank", "Damage", "Support"] as const;
+  return Object.fromEntries(roles.map(role => {
+    const candidates = heroes
+      .filter(hero => hero.general_rol === role && hero.name !== selected.name)
+      .map(hero => ({ name: hero.name, score: scores[hero.name] ?? 0 }))
+      .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+    const teammatesNeeded = selected.general_rol === role ? 1 : 2;
+    const picks: SynergyLineup[typeof role] = candidates.slice(0, teammatesNeeded);
+    if (selected.general_rol === role) picks.unshift({ name: selected.name, score: 0, selected: true });
+    return [role, picks];
+  })) as SynergyLineup;
+}
+
+function formatLineup(lineup: SynergyLineup) {
+  const roleIcons = { Tank: "🛡️", Damage: "⚔️", Support: "➕" };
+  return (["Tank", "Damage", "Support"] as const).map(role => {
+    const heroes = lineup[role].map(hero => hero.selected
+      ? `**${hero.name}** *(you)*`
+      : `**${hero.name}** — ${synergyLabel(hero.score)} (${hero.score >= 0 ? "+" : ""}${hero.score})`);
+    return `${roleIcons[role]} **${role}**\n${heroes.join("\n")}`;
+  }).join("\n\n");
 }
 
 type HeroRoleFilter = "all" | "tank" | "damage" | "support";
@@ -106,10 +317,18 @@ async function randomHeroView(role: HeroRoleFilter, exclude?: string) {
   const pool = eligible.length > 1 ? eligible.filter(hero => hero.key !== exclude) : eligible;
   const hero = pool[Math.floor(Math.random() * pool.length)]!;
   const roleLabel = titleCase(hero.role);
+  let teammateLine = "";
+  try {
+    const [overpickerHeroes, matrix] = await Promise.all([overpicker.heroes(), overpicker.synergyMatrix()]);
+    const lineup = buildSynergyLineup(hero.name, overpickerHeroes, matrix);
+    if (lineup) teammateLine = `\n\n🤝 **Suggested 6v6 team**\n${formatLineup(lineup)}`;
+  } catch {
+    // The random picker should still work if Overpicker is temporarily unavailable.
+  }
   const embed = new EmbedBuilder()
     .setColor(0xf99e1a)
     .setTitle(`🎲 You should play ${hero.name}`)
-    .setDescription(`**${roleEmoji(hero.role as CompRole)} ${roleLabel}**\n*No counter-picking. The bot has spoken.*`)
+    .setDescription(`**${roleEmoji(hero.role as CompRole)} ${roleLabel}**\n*No counter-picking. The bot has spoken.*${teammateLine}`)
     .setThumbnail(hero.portrait)
     .setFooter({ text: role === "all" ? "Picking from all roles" : `Picking from ${roleLabel} heroes` });
   const controls = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -197,7 +416,7 @@ async function handleAutocomplete(i: AutocompleteInteraction) {
       .map(link => ({ name: `${link.isDefault ? "★ " : ""}${link.label} · ${link.battletag} · ${link.platform.toUpperCase()}`, value: link.label })));
     return;
   }
-  if (!["ow-hero-career", "ow-hero-scoreboard"].includes(i.commandName) || focused.name !== "hero") return;
+  if (!["ow-hero-career", "ow-hero-scoreboard", "ow-counters", "ow-synergies"].includes(i.commandName) || focused.name !== "hero") return;
   const query = String(focused.value).toLowerCase();
   try {
     const heroes = (await overfast.heroes())

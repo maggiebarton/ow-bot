@@ -12,4 +12,5 @@ export const config = {
   guildId: process.env.DISCORD_GUILD_ID,
   databasePath: process.env.DATABASE_PATH ?? "./data/ow-bot.db",
   overfastBaseUrl: process.env.OVERFAST_BASE_URL ?? "https://overfast-api.tekrop.fr",
+  overpickerBaseUrl: process.env.OVERPICKER_BASE_URL ?? "https://api.overpicker.com",
 };

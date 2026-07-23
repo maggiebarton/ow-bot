@@ -35,6 +35,16 @@ export const commands = [
     .addStringOption(o => o.setName("role").setDescription("Limit the pick to one role (defaults to all roles)").addChoices(
       { name: "All Roles", value: "all" }, { name: "Tank", value: "tank" },
       { name: "Damage", value: "damage" }, { name: "Support", value: "support" })),
+  new SlashCommandBuilder().setName("ow-counters").setDescription("Find the best ban votes for the hero you plan to play")
+    .addStringOption(o => o.setName("hero").setDescription("Start typing the hero you plan to play").setRequired(true).setAutocomplete(true))
+    .addStringOption(o => o.setName("tier").setDescription("Override the Competitive tier from your default linked account").addChoices(
+      { name: "All Tiers", value: "All" }, { name: "Bronze", value: "Bronze" }, { name: "Silver", value: "Silver" },
+      { name: "Gold", value: "Gold" }, { name: "Platinum", value: "Platinum" }, { name: "Diamond", value: "Diamond" },
+      { name: "Master", value: "Master" }, { name: "Grandmaster & Champion", value: "Grandmaster" }))
+    .addStringOption(o => o.setName("input").setDescription("Override the input pool from your default linked account").addChoices(
+      { name: "Mouse & Keyboard", value: "PC" }, { name: "Controller", value: "Console" })),
+  new SlashCommandBuilder().setName("ow-synergies").setDescription("Find the best teammates for the hero you plan to play")
+    .addStringOption(o => o.setName("hero").setDescription("Start typing the hero you plan to play").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("ow-tag").setDescription("Show a member's saved BattleTag")
     .addUserOption(o => o.setName("user").setDescription("Discord member (defaults to you)"))
     .addStringOption(o => o.setName("account").setDescription("One account, or omit to list all").setAutocomplete(true)),

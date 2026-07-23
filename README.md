@@ -25,7 +25,9 @@ OverSauce is a Discord bot for linking BattleTags, viewing Overwatch profiles an
 - `/ow-hero-career hero [user] [account] [mode]` — show grouped hero statistics, then switch heroes or modes without rerunning the command
 - `/ow-hero-scoreboard hero [mode]` — show the role-aware Hero Score ranking for a particular hero
 - `/ow-meme` — post a random original Overwatch meme, with an **Another one** button
-- `/ow-random-hero [role]` — pick a random hero from all roles or limit the choice to Tank, Damage, or Support; use **Reroll** for another pick
+- `/ow-random-hero [role]` — pick a random hero from all roles or limit the choice to Tank, Damage, or Support; also shows a recommended 2 Tank/2 Damage/2 Support lineup, and **Reroll** picks again
+- `/ow-counters hero [tier] [input]` — combine Overpicker matchups with Blizzard Competitive pick rates; omitted filters use the default linked account's platform and rank for the selected hero's role, while either can be overridden
+- `/ow-synergies hero` — select the hero you plan to play and build a complete 6v6 lineup with two heroes from each role
 - `/ow-tag [user] [account]` — list a member's saved BattleTags or retrieve one labeled account
 - `/ow-scoreboard [metric] [mode]` — rank linked members by win rate, KDA, games won, or current Tank/Damage/Support/Open Queue (6v6) competitive rank
 - `/ow-comp-check player1 player2 [player3] [player4] [player5] [account1] … [account5]` — find narrow-group role assignments using a selected account label for each member (or their default), displayed as mobile-friendly stacked assignments
@@ -102,6 +104,8 @@ npm test
 - Links are stored in the SQLite file configured by `DATABASE_PATH` and scoped per Discord server. Existing single-account databases migrate automatically, labeling every existing link `main` and keeping it as the default.
 - Scoreboards and career views fetch current data when requested. OverFast generally caches player data for about 10 minutes.
 - Hero autocomplete data is cached by the bot for 24 hours.
+- Counter and teammate recommendations come from Overpicker's [counter](https://overpicker.com/counters) and [synergy](https://overpicker.com/synergies) matrices and are cached for 6 hours.
+- Rank-aware counter priority uses Blizzard's official [Hero Statistics](https://overwatch.blizzard.com/en-us/rates/) for Competitive Role Queue in the Americas, cached for 1 hour.
 - `/ow-hero-career` includes Tank, Damage, and Support hero selectors plus Competitive and Quick Play toggle buttons. These controls update the existing Discord message.
 - Competitive-rank scoreboards use each member's linked platform and current `/summary` role or Open Queue (6v6) rank. Unranked members are omitted; the mode option does not apply to rank metrics.
 - `/ow-comp-check` evaluates every valid 1 Tank/2 Damage/2 Support role assignment using published ranks. It requires one platform pool, excludes unranked role choices, and uses narrow ranges of 10 divisions through Diamond, 5 in Master/Grandmaster, and 3 in Champion.
